@@ -1,0 +1,254 @@
+---
+title: "Predictive model for quality of exercise execution"
+author: "vimatrel"
+date: "July 15, 2015"
+output: html_document
+---
+
+## Abstract  
+In recent years, the amount of data that can be collected from devices such as Jawbone Up, Nike FuelBand, and Fitbit has increased and has become relatively inexpensive. People using this data usually focus on the amount of activity performed and ignore the quality of the execution. 
+
+The goal of this project is to train a predictive model for quality of execution. We will be using data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. They were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions:  
+
+* exactly according to the specification (Class A)  
+* throwing the elbows to the front (Class B)  
+* lifting the dumbbell only halfway (Class C)   
+* lowering the dumbbell only halfway (Class D)  
+* throwing the hips to the front (Class E)  
+ 
+Read more: [http://groupware.les.inf.puc-rio.br/har#ixzz3gr3ryFEO]  
+
+## Means of solution  
+To build our model, we first need to decide which features will be useful. This steps were followed: 
+
+  
+1. Discarded columns with >90% NAs. I see no point in imputing columns with such high number of NAs. With this we reduce the data set to only 60 features.  
+2. Removed Columns 1:7 as they can lead to overfitting our model. This are time windows and participant name, this data is not a good candidate for training our model.  
+3. Make the outcome a factor variable. This is needed for our models.    
+4. Create data partition 80/20, for testing out of sample data. This is needed to cross validate our model.  
+5. Select features via CFS. Method chosen to keep only highly correlated feature-outcome columns. This reduced our dataset to only 7 features. 
+6. Create models. Four models were created for comparison; CART, RF, C5.0 and GBM. Cross validation with n = 4 was performed during the training of each model.  
+7. Compare the accuracy of our models and decide which one to use. 
+8. Use the cross validation test set we created to validate the out of sample data prediction with the selected model.
+9. Use the model to predict over the provided test set and submit results as indicated.  
+
+All code can be followed in the Appendix section of this document.
+
+```{r librarysection, echo = FALSE, warning=FALSE, message=FALSE, results = "markup"}
+suppressPackageStartupMessages(library(readr))
+suppressPackageStartupMessages(library(caret))
+suppressPackageStartupMessages(library(C50))
+suppressPackageStartupMessages(library(plyr))
+suppressPackageStartupMessages(library(FSelector))
+
+```
+
+
+```{r readfiles, echo = FALSE, eval=FALSE, results = "markup"}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "test.csv")
+
+training <- read_csv("training.csv", 
+                     col_types= list(
+                                    var_total_accel_belt = col_double(),
+                                    var_accel_arm = col_double(),
+                                    roll_arm = col_double(),
+                                    yaw_arm = col_double(),
+                                    var_roll_belt = col_double(),
+                                    var_accel_forearm = col_double(),
+                                    max_picth_arm = col_double(),
+                                    min_pitch_arm = col_double(),
+                                    amplitude_pitch_arm = col_double(),
+                                    yaw_forearm = col_double(),
+                                    var_pitch_belt = col_double(),
+                                    max_picth_forearm = col_double(),
+                                    min_pitch_forearm = col_double(),
+                                    amplitude_pitch_forearm = col_double(),
+                                    kurtosis_picth_belt = col_double(),
+                                    kurtosis_yaw_belt = col_double(),
+                                    skewness_roll_belt.1 = col_double(),
+                                    skewness_yaw_belt = col_double(),
+                                    kurtosis_picth_arm = col_double(),
+                                    kurtosis_yaw_arm = col_double(),
+                                    skewness_pitch_arm = col_double(),
+                                    skewness_yaw_arm = col_double(),
+                                    kurtosis_yaw_dumbbell = col_double(),
+                                    skewness_yaw_dumbbell = col_double(),
+                                    kurtosis_yaw_forearm = col_double(),
+                                    skewness_yaw_forearm = col_double(),
+                                    magnet_dumbbell_z = col_double(),
+                                    magnet_forearm_y = col_double(),
+                                    magnet_forearm_z = col_double()
+                                ))
+
+validate <- read_csv("test.csv", 
+                     col_types= list(
+                                    var_total_accel_belt = col_double(),
+                                    var_accel_arm = col_double(),
+                                    roll_arm = col_double(),
+                                    yaw_arm = col_double(),
+                                    var_roll_belt = col_double(),
+                                    var_accel_forearm = col_double(),
+                                    max_picth_arm = col_double(),
+                                    min_pitch_arm = col_double(),
+                                    amplitude_pitch_arm = col_double(),
+                                    yaw_forearm = col_double(),
+                                    var_pitch_belt = col_double(),
+                                    max_picth_forearm = col_double(),
+                                    min_pitch_forearm = col_double(),
+                                    amplitude_pitch_forearm = col_double(),
+                                    kurtosis_picth_belt = col_double(),
+                                    kurtosis_yaw_belt = col_double(),
+                                    skewness_roll_belt.1 = col_double(),
+                                    skewness_yaw_belt = col_double(),
+                                    kurtosis_picth_arm = col_double(),
+                                    kurtosis_yaw_arm = col_double(),
+                                    skewness_pitch_arm = col_double(),
+                                    skewness_yaw_arm = col_double(),
+                                    kurtosis_yaw_dumbbell = col_double(),
+                                    skewness_yaw_dumbbell = col_double(),
+                                    kurtosis_yaw_forearm = col_double(),
+                                    skewness_yaw_forearm = col_double(),
+                                    magnet_dumbbell_z = col_double(),
+                                    magnet_forearm_y = col_double(),
+                                    magnet_forearm_z = col_double()
+                                ))
+```
+
+```{r loadfilesrds, echo=FALSE}
+#saveRDS(training, "training.RDS")
+training <- readRDS("training.RDS")
+#saveRDS(validate, "validate.RDS")
+validate <- readRDS("validate.RDS")
+```
+
+```{r cleaning, echo = FALSE, results = "markup"}
+# 1 Discard coulumns with 90% NAs
+training <- training[, colSums(is.na(training)) < .90]
+
+# 2  Columns 1:7 can lead to overfiting our model, we will remove them.  
+training <- training[,-c(1:7)]
+
+# 3 Make outcome a facvtor variable
+training$classe <- factor(training$classe)
+
+# 4. create partition for testing OOS
+set.seed(123)
+datasplit <- createDataPartition(training$classe, p=0.80, list = FALSE)
+training <- training[datasplit, ]
+testing <- training[-datasplit, ]
+
+```
+
+```{r FeatureSelection, echo = FALSE, cache = TRUE, results = "markup"}
+# 5. Select features via CFS
+impotantfeatures <- cfs(classe ~ ., training)
+miniTraining <- training[, c(impotantfeatures, "classe")]
+```
+
+```{r, echo=FALSE}
+saveRDS(miniTraining, "miniTraining.RDS")
+miniTraining <- readRDS("miniTraining.RDS")
+```
+
+```{r, xyformodels, echo = FALSE, results= "markup"}
+# 6. Create models
+outcomeName <- "classe"
+predictorNames <- names(miniTraining)[names(miniTraining) != outcomeName]
+```
+
+```{r Models, echo = FALSE, eval=FALSE, message=FALSE, warning=FALSE, results = "markup"}
+mycontrol <- trainControl(method = "cv", number=4)
+
+set.seed(123)
+saveRDS(train(x = miniTraining[, predictorNames], y = miniTraining[,outcomeName],
+              method = "rpart", tuneLength = 10, trControl = mycontrol, metric = "Accuracy"), 
+        "modelCART.RDS")
+gc()
+saveRDS(train(x = miniTraining[, predictorNames], y = miniTraining[,outcomeName], 
+              method = "rf", trControl = mycontrol, metric = "Accuracy"), 
+        "modelRF.RDS")
+gc()
+saveRDS(train(x = miniTraining[, predictorNames], y = miniTraining[,outcomeName], 
+              method= "C5.0", trControl = mycontrol, metric = "Accuracy"), 
+        "modelC5.RDS")
+gc()
+saveRDS(train(x = miniTraining[, predictorNames], y = miniTraining[,outcomeName], 
+              method= "gbm", trControl = mycontrol, metric = "Accuracy", verbose = FALSE), 
+        "modelGBM.RDS")
+```
+## Results  
+The best accuracy performance appears to be for the random forest model, followed by the C5 one. Nevertheless, we will select C5 to be on the safe side of a possible RF overfitting.  
+
+```{r Prediction, echo = FALSE, messages = FALSE, warnings = FALSE, results="markup"}
+# 7. Let´s check how our models did.
+# Read the models
+modelCART <- readRDS("modelCART.RDS")
+modelRF <- readRDS("modelRF.RDS")
+modelC5 <- readRDS("modelC5.RDS")
+modelGBM <- readRDS("modelGBM.RDS")
+
+trainaccuracy <- dplyr::bind_rows(getTrainPerf(modelCART),
+                                  getTrainPerf(modelRF), 
+                                  getTrainPerf(modelC5), 
+                                  getTrainPerf(modelGBM))
+knitr::kable(trainaccuracy, caption = "Acuracy and Kappa of training set by model", align ="l")
+```
+
+For our cross validation test set, we have an Accuracy = 1 with a 95% CI : (0.9988, 1). We only used 7 features and performed cross validation four times during the construction of the model and, an additional one with the testing set we created, so the possibility of overfitting is pretty much discarded.
+
+```{r choosenmodel, echo = FALSE, messages = FALSE, warnings = FALSE, results="markup"}
+# Evaluate on test set
+predictC5 <- predict(modelC5, newdata = testing[, predictorNames], type = "raw")
+#postResample(predictC5, testing$classe)
+confusionMatrix(predictC5, testing$classe)
+```
+
+```{r, echo = FALSE, eval = FALSE}
+submitresults <- predict(modelC5, newdata = validate[, predictorNames], type = "raw")
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(submitresults)
+```
+
+
+## Conclussions
+We have trained a C5.0 model that can accurately predict the class ("A", "B", "C", "D", "E") of Dumbbell Biceps Curl performed over a CV test set of `r nrow(testing)` observations, with Accuracy = 1 and a 95% CI : (0.9988, 1). We expect an out of sample error to be between 0.0012 and 0, for a similar size sample dataset.  
+
+
+## Appendix
+### Code
+```{r, ref.label="librarysection", eval=FALSE, results='hide'}
+
+```
+```{r, ref.label="readfiles", eval=FALSE, results='hide'}
+
+```
+```{r, ref.label="cleaning", eval=FALSE, results='hide'}
+
+```
+```{r, ref.label="featureselection", eval=FALSE, results='hide'}
+
+```
+```{r, ref.label="xyformodels", eval=FALSE, results='hide'}
+
+```
+```{r, ref.label="Models", eval=FALSE, results='hide'}
+
+```
+```{r, ref.label="Prediction", eval=FALSE, results='hide'}
+
+```
+```{r, ref.label="choosenmodel", eval=FALSE, results='hide'}
+
+```
+
+
+
+
